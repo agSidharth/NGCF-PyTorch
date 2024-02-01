@@ -1,5 +1,5 @@
 import numpy as np
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import average_precision_score,roc_auc_score
 
 
 def recall(rank, ground_truth, N):
@@ -99,9 +99,16 @@ def F1(pre, rec):
     else:
         return 0.
 
-def AUC(ground_truth, prediction):
+def auc(ground_truth, prediction):
     try:
         res = roc_auc_score(y_true=ground_truth, y_score=prediction)
     except Exception:
-        res = 0.
+        res = -1
+    return res
+
+def ap(ground_truth, prediction):
+    try:
+        res = average_precision_score(y_true=ground_truth,y_score=prediction)
+    except Exception:
+        res = 0
     return res

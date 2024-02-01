@@ -10,6 +10,7 @@ from utility.parser import parse_args
 from utility.load_data import *
 import multiprocessing
 import heapq
+import math
 
 cores = multiprocessing.cpu_count() // 2
 
@@ -20,6 +21,10 @@ data_generator = Data(path=args.data_path + args.dataset, batch_size=args.batch_
 USR_NUM, ITEM_NUM = data_generator.n_users, data_generator.n_items
 N_TRAIN, N_TEST = data_generator.n_train, data_generator.n_test
 BATCH_SIZE = args.batch_size
+
+def sigmoid(x):
+    return 1 / (1 + math.exp(-x))
+
 
 def ranklist_by_heapq(user_pos_test, test_items, rating, Ks):
     item_score = {}
@@ -35,14 +40,16 @@ def ranklist_by_heapq(user_pos_test, test_items, rating, Ks):
             r.append(1)
         else:
             r.append(0)
-    auc = 0.
-    return r, auc
+    auc = get_auc(item_score, user_pos_test)
+    ap = get_ap(item_score, user_pos_test)
+    return r, auc, ap
 
 def get_auc(item_score, user_pos_test):
+    
     item_score = sorted(item_score.items(), key=lambda kv: kv[1])
     item_score.reverse()
     item_sort = [x[0] for x in item_score]
-    posterior = [x[1] for x in item_score]
+    posterior = [sigmoid(x[1]) for x in item_score]
 
     r = []
     for i in item_sort:
@@ -50,8 +57,27 @@ def get_auc(item_score, user_pos_test):
             r.append(1)
         else:
             r.append(0)
+    
     auc = metrics.auc(ground_truth=r, prediction=posterior)
     return auc
+
+def get_ap(item_score, user_pos_test):
+    
+    item_score = sorted(item_score.items(), key=lambda kv: kv[1])
+    item_score.reverse()
+    item_sort = [x[0] for x in item_score]
+    posterior = [sigmoid(x[1]) for x in item_score]
+
+    r = []
+    for i in item_sort:
+        if i in user_pos_test:
+            r.append(1)
+        else:
+            r.append(0)
+
+    ap = metrics.ap(ground_truth=r, prediction=posterior)
+    return ap
+    
 
 def ranklist_by_sorted(user_pos_test, test_items, rating, Ks):
     item_score = {}
@@ -67,10 +93,12 @@ def ranklist_by_sorted(user_pos_test, test_items, rating, Ks):
             r.append(1)
         else:
             r.append(0)
+        
     auc = get_auc(item_score, user_pos_test)
-    return r, auc
+    ap = get_ap(item_score, user_pos_test)
+    return r, auc, ap
 
-def get_performance(user_pos_test, r, auc, Ks):
+def get_performance(user_pos_test, r, auc, Ks, ap):
     precision, recall, ndcg, hit_ratio = [], [], [], []
 
     for K in Ks:
@@ -80,7 +108,7 @@ def get_performance(user_pos_test, r, auc, Ks):
         hit_ratio.append(metrics.hit_at_k(r, K))
 
     return {'recall': np.array(recall), 'precision': np.array(precision),
-            'ndcg': np.array(ndcg), 'hit_ratio': np.array(hit_ratio), 'auc': auc}
+            'ndcg': np.array(ndcg), 'hit_ratio': np.array(hit_ratio), 'auc': auc, 'ap': ap}
 
 
 def test_one_user(x):
@@ -101,16 +129,16 @@ def test_one_user(x):
     test_items = list(all_items - set(training_items))
 
     if args.test_flag == 'part':
-        r, auc = ranklist_by_heapq(user_pos_test, test_items, rating, Ks)
+        r, auc, ap = ranklist_by_heapq(user_pos_test, test_items, rating, Ks)
     else:
-        r, auc = ranklist_by_sorted(user_pos_test, test_items, rating, Ks)
+        r, auc, ap = ranklist_by_sorted(user_pos_test, test_items, rating, Ks)
 
-    return get_performance(user_pos_test, r, auc, Ks)
+    return get_performance(user_pos_test, r, auc, Ks, ap)
 
 
 def test(model, users_to_test, drop_flag=False, batch_test_flag=False):
     result = {'precision': np.zeros(len(Ks)), 'recall': np.zeros(len(Ks)), 'ndcg': np.zeros(len(Ks)),
-              'hit_ratio': np.zeros(len(Ks)), 'auc': 0.}
+              'hit_ratio': np.zeros(len(Ks)), 'auc': 0., 'ap': 0.}
 
     pool = multiprocessing.Pool(cores)
 
@@ -176,7 +204,7 @@ def test(model, users_to_test, drop_flag=False, batch_test_flag=False):
                                                               drop_flag=True)
                 rate_batch = model.rating(u_g_embeddings, pos_i_g_embeddings).detach().cpu()
 
-        user_batch_rating_uid = zip(rate_batch.numpy(), user_batch)
+        user_batch_rating_uid = zip(rate_batch, user_batch)
         batch_result = pool.map(test_one_user, user_batch_rating_uid)
         count += len(batch_result)
 
@@ -186,6 +214,7 @@ def test(model, users_to_test, drop_flag=False, batch_test_flag=False):
             result['ndcg'] += re['ndcg']/n_test_users
             result['hit_ratio'] += re['hit_ratio']/n_test_users
             result['auc'] += re['auc']/n_test_users
+            result['ap'] += re['ap']/n_test_users
 
 
     assert count == n_test_users

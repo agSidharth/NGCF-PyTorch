@@ -29,21 +29,33 @@ class Data(object):
             for l in f.readlines():
                 if len(l) > 0:
                     l = l.strip('\n').split(' ')
-                    items = [int(i) for i in l[1:]]
                     uid = int(l[0])
-                    self.exist_users.append(uid)
-                    self.n_items = max(self.n_items, max(items))
+                    
                     self.n_users = max(self.n_users, uid)
+                    
+                    if len(l)==1 or l[1]=='':
+                        continue
+                    
+                    self.exist_users.append(uid)
+                    items = [int(i) for i in l[1:]]
+                    self.n_items = max(self.n_items, max(items))
                     self.n_train += len(items)
-
+    
+        self.exist_users_test = []
         with open(test_file) as f:
             for l in f.readlines():
                 if len(l) > 0:
-                    l = l.strip('\n')
-                    try:
-                        items = [int(i) for i in l.split(' ')[1:]]
-                    except Exception:
+                    l = l.strip('\n').split(' ')
+                    
+                    uid = int(l[0])
+                    
+                    self.n_users = max(self.n_users, uid)
+                    
+                    if len(l)==1 or l[1]=='':
                         continue
+                    
+                    self.exist_users_test.append(uid)
+                    items = [int(i) for i in l[1:]]
                     self.n_items = max(self.n_items, max(items))
                     self.n_test += len(items)
         self.n_items += 1
@@ -57,11 +69,14 @@ class Data(object):
         with open(train_file) as f_train:
             with open(test_file) as f_test:
                 for l in f_train.readlines():
-                    if len(l) == 0:
-                        break
-                    l = l.strip('\n')
-                    items = [int(i) for i in l.split(' ')]
-                    uid, train_items = items[0], items[1:]
+                    if len(l) == 0: break
+                    l = l.strip('\n').split(' ')
+                    
+                    if l[1]=='':
+                        uid, test_items = int(l[0]),[]
+                    else:
+                        items = [int(i) for i in l]
+                        uid, train_items = items[0], items[1:]
 
                     for i in train_items:
                         self.R[uid, i] = 1.
@@ -71,13 +86,13 @@ class Data(object):
 
                 for l in f_test.readlines():
                     if len(l) == 0: break
-                    l = l.strip('\n')
-                    try:
-                        items = [int(i) for i in l.split(' ')]
-                    except Exception:
-                        continue
-
-                    uid, test_items = items[0], items[1:]
+                    l = l.strip('\n').split(' ')
+                    
+                    if l[1]=='':
+                        uid, test_items = int(l[0]),[]
+                    else:
+                        items = [int(i) for i in l]
+                        uid, test_items = items[0], items[1:]
                     self.test_set[uid] = test_items
 
     def get_adj_mat(self):
@@ -190,6 +205,49 @@ class Data(object):
 
         def sample_neg_items_for_u_from_pools(u, num):
             neg_items = list(set(self.neg_pools[u]) - set(self.train_items[u]))
+            return rd.sample(neg_items, num)
+
+        pos_items, neg_items = [], []
+        for u in users:
+            pos_items += sample_pos_items_for_u(u, 1)
+            neg_items += sample_neg_items_for_u(u, 1)
+
+        return users, pos_items, neg_items
+    
+    def sampleTest(self):
+        if self.batch_size <= self.n_users:
+            users = rd.sample(self.exist_users_test, self.batch_size)
+        else:
+            users = [rd.choice(self.exist_users_test) for _ in range(self.batch_size)]
+
+        def sample_pos_items_for_u(u, num):
+            # sample num pos items for u-th user
+            pos_items = self.test_set[u]
+            n_pos_items = len(pos_items)
+            pos_batch = []
+            while True:
+                if len(pos_batch) == num:
+                    break
+                pos_id = np.random.randint(low=0, high=n_pos_items, size=1)[0]
+                pos_i_id = pos_items[pos_id]
+
+                if pos_i_id not in pos_batch:
+                    pos_batch.append(pos_i_id)
+            return pos_batch
+
+        def sample_neg_items_for_u(u, num):
+            # sample num neg items for u-th user
+            neg_items = []
+            while True:
+                if len(neg_items) == num:
+                    break
+                neg_id = np.random.randint(low=0, high=self.n_items,size=1)[0]
+                if neg_id not in self.test_set[u] and neg_id not in neg_items:
+                    neg_items.append(neg_id)
+            return neg_items
+
+        def sample_neg_items_for_u_from_pools(u, num):
+            neg_items = list(set(self.neg_pools[u]) - set(self.test_set[u]))
             return rd.sample(neg_items, num)
 
         pos_items, neg_items = [], []
